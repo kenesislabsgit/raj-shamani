@@ -670,18 +670,71 @@ function updateResume() {
   $('#resume-question').hidden = view === 'answer' || !$('#asked-question').textContent;
   $('#resume-label').textContent = busy ? 'Your question is being checked. Return to the conversation' : 'Return to your last question';
 }
-function setProgress(text, error = false, loading = false) { $('#request-status').textContent = text; $('#request-status').className = 'request-status' + (error ? ' error' : '') + (loading ? ' loading' : ''); }
+function setProgress(text, error = false, loading = false) {
+  $('#request-status').textContent = text;
+  $('#request-status').className = 'request-status' + (error ? ' error' : '') + (loading ? ' loading' : '');
+  if (loading && text) {
+    const activity = $('#answer-progress [aria-current=step] .phase-events');
+    if (activity && activity.lastElementChild?.textContent !== text) {
+      activity.append(el('li', '', text));
+      while (activity.children.length > 3) activity.firstElementChild.remove();
+    }
+  }
+}
+function initialiseGenerationProgress() {
+  if ($('#answer-progress-bar')) return;
+  // Build on the existing page shell so AWS and Vercel can roll out separately.
+  const progress = $('#answer-progress'), heading = progress.querySelector('.progress-heading');
+  const title = el('div', 'progress-title'), spinner = el('span', 'progress-spinner');
+  spinner.setAttribute('aria-hidden', 'true');
+  $('#progress-heading').textContent = 'Answer in progress';
+  title.append(spinner, $('#progress-heading')); heading.prepend(title);
+  const bar = el('div', 'progress-track'); bar.id = 'answer-progress-bar';
+  Object.entries({role: 'progressbar', 'aria-label': 'Answer stages completed', 'aria-valuemin': '0', 'aria-valuemax': '3'})
+    .forEach(([key, value]) => bar.setAttribute(key, value));
+  bar.append(el('span', 'progress-fill'), el('span', 'progress-working'));
+  const steps = progress.querySelector('ol'); steps.classList.add('generation-steps');
+  progress.insertBefore(bar, steps);
+  const labels = ['Searching conversations', 'Checking source clips', 'Preparing your answer'];
+  steps.querySelectorAll('[data-phase]').forEach((node, index) => {
+    const label = node.querySelector('.phase-label'), content = label.parentElement;
+    label.textContent = labels[index]; content.classList.add('phase-content');
+    node.querySelector('.phase-state').classList.add('sr-only');
+    const detail = el('div', 'phase-detail'), activity = el('ul', 'phase-events');
+    activity.setAttribute('aria-label', labels[index]); detail.hidden = true;
+    detail.append(activity); content.append(detail);
+  });
+}
+function resetGenerationProgress() {
+  initialiseGenerationProgress();
+  delete $('#answer-progress').dataset.currentPhase;
+  document.querySelectorAll('#answer-progress .phase-events').forEach(node => node.replaceChildren());
+  generationPhase('search');
+}
 function generationPhase(phase) {
   const phases = ['search', 'review', 'compose'], current = phases.indexOf(phase);
-  if (current < 0) return;
+  const progress = $('#answer-progress');
+  if (current < 0 || current < phases.indexOf(progress.dataset.currentPhase)) return;
+  progress.dataset.currentPhase = phase;
   $('#answer-step').textContent = `Step ${current + 1} of ${phases.length}`;
+  const bar = $('#answer-progress-bar');
+  // Count completed server stages, not an estimated percentage or time remaining.
+  if (bar) {
+    bar.setAttribute('aria-valuenow', String(current));
+    bar.setAttribute('aria-valuetext', `${current} of ${phases.length} stages complete`);
+  }
   document.querySelectorAll('#answer-progress [data-phase]').forEach((node, index) => {
     const active = index === current, complete = index < current;
     node.dataset.state = active ? 'active' : complete ? 'complete' : 'waiting';
-    node.querySelector('.phase-marker').textContent = complete ? '✓' : String(index + 1);
+    const marker = node.querySelector('.phase-marker');
+    marker.replaceChildren();
+    if (complete) marker.append(icon('check'));
+    else if (active) marker.append(el('span', 'progress-spinner'));
     if (active) node.setAttribute('aria-current', 'step');
     else node.removeAttribute('aria-current');
     node.querySelector('.phase-state').textContent = active ? 'In progress' : complete ? 'Done' : 'Waiting';
+    const detail = node.querySelector('.phase-detail');
+    if (detail) detail.hidden = !active;
   });
 }
 function beginAnswer(question, options = {}) {
@@ -689,7 +742,7 @@ function beginAnswer(question, options = {}) {
   $('#answer-label').hidden = true;
   $('#retry-question').hidden = true;
   $('#answer-scope').textContent = lastQuestion?.sourceID ? 'Conversation: ' + (findVideo(lastQuestion.sourceID)?.title || 'Selected conversation') : 'All conversations';
-  $('#watch-panel').hidden = true; $('#watch-container').replaceChildren(); setProgress('');
+  $('#watch-panel').hidden = true; $('#watch-container').replaceChildren(); setProgress(''); resetGenerationProgress();
 }
 function momentCard(citation, index, guide) {
   const node = el('article', 'moment'); node.id = `moment-${index + 1}`; node.tabIndex = -1;
@@ -800,7 +853,7 @@ async function ask(question, selectedTopic = '', options = {}) {
       if (finished || request.cancelled || !line.trim()) return;
       const event = JSON.parse(line);
       if (event.type === 'stage' && typeof event.message === 'string') {
-        setProgress(event.message, false, true); generationPhase(event.phase);
+        generationPhase(event.phase); setProgress(event.message, false, true);
       }
       // Older servers may send raw excerpts. Only the final response can show clips.
       if (event.type === 'answer') { renderAnswer(event.response); finished = true; }

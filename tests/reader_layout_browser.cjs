@@ -42,7 +42,7 @@ module.exports = async (page, output, citation) => {
             }
             return [255, 255, 255];
           };
-          const selectors = '.main-nav button, .back-link, .availability-note, .episode-meta, .episode-guest, .moment-copy, .moment-limit, .clip-source, .clip-time, .clip-play, .answer-lead, .answer-limitation, .library-tabs button, .folder-copy strong, .folder-copy>span, .action-menu summary, .action-menu button, .remove-save, .phase-marker, .phase-label, .phase-state, #answer-step, .request-status, .answer-scope, #answer-elapsed';
+          const selectors = '.main-nav button, .back-link, .availability-note, .episode-meta, .episode-guest, .moment-copy, .moment-limit, .clip-source, .clip-time, .clip-play, .answer-lead, .answer-limitation, .library-tabs button, .folder-copy strong, .folder-copy>span, .action-menu summary, .action-menu button, .remove-save, .phase-marker, .phase-label, .phase-state, .phase-events li, #answer-step, .request-status, .answer-scope, #answer-elapsed';
           for (const node of document.querySelectorAll(selectors)) {
             if (!node.getClientRects().length) continue;
             const style = getComputedStyle(node), fg = luminance(rgb(style.color)), bg = luminance(background(node));

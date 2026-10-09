@@ -43,13 +43,23 @@ module.exports = async function checkReaderStream(page, citation, answer) {
 
   await page.clock.install();
   await start('How can I focus better?');
+  assert.equal(await page.locator('#answer-progress-bar').getAttribute('aria-valuenow'), '0');
+  assert.equal(await page.locator('[data-phase=search] .phase-detail').isVisible(), true);
+  assert.equal(await page.locator('[data-phase=review] .phase-detail').isVisible(), false);
   await send(candidates);
   await send({type: 'stage', phase: 'review', message: 'Checking source clips…'});
   assert.equal(await page.locator('[data-phase=review]').getAttribute('aria-current'), 'step');
   assert.equal(await page.locator('[data-phase=compose] .phase-state').textContent(), 'Waiting');
   assert.equal(await page.locator('#answer-step').textContent(), 'Step 2 of 3');
+  assert.equal(await page.locator('#answer-progress-bar').getAttribute('aria-valuenow'), '1');
+  assert.equal(await page.locator('[data-phase=search] .phase-detail').isVisible(), false);
+  assert.equal(await page.locator('[data-phase=review] .phase-detail').isVisible(), true);
+  assert.equal(await page.locator('[data-phase=review] .phase-events').textContent(), 'Checking source clips…');
+  await send({type: 'stage', phase: 'review', message: 'Checking source clips…'});
+  assert.equal(await page.locator('[data-phase=review] .phase-events li').count(), 1, 'Repeated server updates must not duplicate the activity log');
   await page.clock.fastForward(5000);
   assert.equal(await page.locator('[data-phase=review]').getAttribute('aria-current'), 'step', 'Elapsed time must not advance server progress');
+  assert.equal(await page.locator('#answer-progress-bar').getAttribute('aria-valuenow'), '1', 'The progress line counts completed stages, not elapsed time');
   await send({type: 'stage', phase: 'compose', message: 'Checking the sources…'});
   await page.waitForFunction(() => document.querySelector('#request-status').textContent === 'Checking the sources…');
   await noClips();
@@ -62,6 +72,9 @@ module.exports = async function checkReaderStream(page, citation, answer) {
   assert.equal(await page.locator('[data-phase=search] .phase-state').textContent(), 'Done');
   assert.equal(await page.locator('[data-phase=review] .phase-state').textContent(), 'Done');
   assert.equal(await page.locator('#answer-step').textContent(), 'Step 3 of 3');
+  assert.equal(await page.locator('#answer-progress-bar').getAttribute('aria-valuenow'), '2');
+  assert.equal(await page.locator('[data-phase=review] .phase-detail').isVisible(), false);
+  assert.equal(await page.locator('[data-phase=compose] .phase-detail').isVisible(), true);
   await page.clock.fastForward(2000);
   assert.match(await page.locator('#answer-elapsed').textContent(), /^Elapsed 0:0[2-9]$/);
   await page.locator('.main-nav [data-view=discover]').click();
@@ -166,9 +179,12 @@ module.exports = async function checkReaderStream(page, citation, answer) {
 
   await start('A stalled request');
   assert.equal(await page.locator('[data-phase=search]').getAttribute('aria-current'), 'step', 'Reset progress for each request');
+  assert.equal(await page.locator('#answer-progress-bar').getAttribute('aria-valuenow'), '0');
+  assert.equal(await page.locator('[data-phase=compose] .phase-events li').count(), 0, 'A new question clears the previous activity');
   await send(candidates);
   await page.clock.fastForward(31000);
   assert.match(await page.locator('#request-status').textContent(), /taking longer than usual/);
+  assert.match(await page.locator('[data-phase=search] .phase-events').textContent(), /taking longer than usual/);
   await noClips();
   assert.equal(await page.locator('#question').isVisible(), false);
   await page.clock.fastForward(270000);

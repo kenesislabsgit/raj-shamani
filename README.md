@@ -1,14 +1,5 @@
 # Knowledge Retriever
 
-## Vercel frontend deployment
-
-`vercel.json` publishes the existing static files in `knowledge/web` without a build
-step. Connect this GitHub repository to Vercel to deploy updates automatically.
-The episode catalog, video links, theme, and browser-local collections work in
-this frontend deployment. AI answers, server history, and Google sign-in require
-the Python backend described below; they are not deployed by this configuration.
-Provider credentials must stay on that backend, never in the static frontend.
-
 ## AWS deployment with private Google accounts
 
 The production entry point is `knowledge.public_server:create_app`, served by Uvicorn.
@@ -311,6 +302,55 @@ Use `GUEST_MODE=1` to exercise the optional guest interface. Install
 layouts, signup/signin switching, retry routes, account changes, expired sessions, and
 cross-tab sign-out during generation. Provider identities in these tests are simulated;
 a real Google consent/callback check requires configured credentials and a test user.
+
+### Vercel frontend with the existing AWS backend
+
+The repository-root `vercel.json` connects the production frontend
+`https://raj-shamani-coral.vercel.app` to the existing CloudFront backend.
+It proxies the authenticated HTML, `/api/*`, `/auth/*`, sign-in/sign-up/sign-out
+pages, and health checks. Vercel serves the browser scripts, styles, fonts and
+images. The HTML comes from AWS so it uses account mode instead of the local
+demo's browser-only storage. No database or AI credentials are published to Vercel.
+
+One-time setup:
+
+1. Add `https://raj-shamani-coral.vercel.app/auth/callback` to the existing Google
+   OAuth Web client's authorized redirect URIs. Keep the CloudFront URI too.
+2. Set `FRONTEND_ORIGIN=https://raj-shamani-coral.vercel.app` and a random
+   `FRONTEND_PROXY_SECRET` of at least 32 characters in the backend's ignored
+   `.env`, then deploy AWS. Keep `PUBLIC_BASE_URL` as the CloudFront origin;
+   the deployer sets it automatically. The two frontend values must come from
+   the same configuration source. Missing or partial settings fail validation.
+3. Connect the Vercel project to `Daniel-Das-k/raj-shamani`, production branch
+   `main`. Use the **repository root**, not `knowledge/web`, as Root Directory.
+4. Set Framework Preset to **Other**. The committed configuration sets Build
+   Command to `node deployment/build-vercel.mjs`, Output Directory to `dist`,
+   and skips dependency installation. Remove conflicting dashboard overrides.
+5. In Vercel's Environment Variables, add `FRONTEND_PROXY_SECRET` for
+   **Production**, using exactly the backend value. Mark it sensitive. It is a
+   server-side routing credential, not a `VITE_` variable or Google client secret.
+6. Redeploy the latest `main` commit to Production. Visit the production Vercel
+   URL in a private window, sign in with Google, create a collection and ask a
+   question. Reload and sign back in to check persistence. Test a second Google
+   account to confirm that it cannot open the first account's saved answer URL.
+
+The proxy key selects only the explicitly configured frontend origin. Arbitrary
+forwarded host headers cannot select a callback or bypass the CloudFront origin
+boundary. Google callbacks are bound to the origin that started the login, while
+CSRF, secure host-only cookies and per-account ownership still apply. Proxy
+responses are not cached. The same Google account has the same saved data on
+both sites, but must sign in separately because cookies belong to each hostname.
+
+The supplied configuration targets the fixed Production URL. Preview deployment
+URLs do not have registered Google callbacks; do not copy the production proxy
+key into Preview environments. A different production domain requires updating
+`FRONTEND_ORIGIN`, Google's callback registration and redeploying AWS.
+
+The static build copies an explicit browser-asset list into `dist/`; it excludes
+HTML demo entrypoints, `.env`, Python files, databases and provider credentials.
+Backend-rendered HTML changes still require an AWS release. Both deployments
+should use the same commit. See [Vercel's external rewrite documentation](https://vercel.com/docs/routing/rewrites)
+and [route environment variables](https://vercel.com/docs/project-configuration/vercel-json#using-environment-variables-in-routes).
 
 ### Run the frontend and backend separately
 

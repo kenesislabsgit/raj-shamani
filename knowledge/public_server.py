@@ -29,6 +29,7 @@ from starlette.routing import Route
 from .accounts import Accounts, CollectionConflict, GUEST_SESSION_SECONDS, UsageLimit
 from .cognito_auth import Cognito
 from .google_auth import Google
+from .frontend_proxy import frontend_configuration
 from .raj_library import RajShamaniLibrary
 from .response_history import ResponseHistory
 from .server import STATIC, recorded_answer
@@ -90,8 +91,9 @@ SECURITY_HEADERS = {
 
 
 class PublicBoundary:
-    def __init__(self, app, *, host, origin_secret):
+    def __init__(self, app, *, host, origin_secret, public_origin, frontend=None):
         self.app, self.host, self.secret = app, host, origin_secret
+        self.public_origin, self.frontend = public_origin, frontend or {}
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
@@ -100,6 +102,17 @@ class PublicBoundary:
         if (request.headers.get('host', '').lower() != self.host or
                 not hmac.compare_digest(request.headers.get('x-reader-origin', ''), self.secret)):
             return await JSONResponse({'error': 'This address is unavailable.'}, 403, headers=SECURITY_HEADERS)(scope, receive, send)
+
+        # CloudFront still authenticates the origin connection. A separate proxy
+        # credential selects the one configured frontend; arbitrary Host/XFH
+        # values can never choose OAuth callbacks or relax Origin validation.
+        proxy_secret = request.headers.get('x-reader-proxy-secret')
+        scope['reader.public_origin'] = self.public_origin
+        if proxy_secret is not None:
+            expected = self.frontend.get('FRONTEND_PROXY_SECRET', '')
+            if not expected or not hmac.compare_digest(proxy_secret.encode(), expected.encode()):
+                return await JSONResponse({'error': 'Frontend connection is not configured.'}, 403, headers=SECURITY_HEADERS)(scope, receive, send)
+            scope['reader.public_origin'] = self.frontend['FRONTEND_ORIGIN']
 
         async def secured_send(message):
             if message['type'] == 'http.response.start':
@@ -143,7 +156,7 @@ class LoginLimiter:
             self.entries[address] = (started, count + 1)
 
 
-def create_app(config=None, *, library_factory=None, identity=None):
+def create_app(config=None, *, library_factory=None, identity=None, frontend_identity=None):
     config = dict(os.environ if config is None else config)
     auth_mode = config.get('PUBLIC_AUTH_MODE', 'google')
     if auth_mode not in {'guest', 'cognito', 'google'}:
@@ -158,6 +171,9 @@ def create_app(config=None, *, library_factory=None, identity=None):
     secret = config.get('ORIGIN_SECRET', '')
     if len(secret) < 32:
         raise ValueError('A random ORIGIN_SECRET of at least 32 characters is required.')
+    frontend = frontend_configuration(config)
+    if frontend.get('FRONTEND_ORIGIN') == base_url:
+        raise ValueError('FRONTEND_ORIGIN must differ from the AWS origin.')
     data = Path(config['DATA_DIR'])
     accounts = Accounts(data / 'accounts.sqlite3')
     history = ResponseHistory(data / 'responses.sqlite3')
@@ -167,6 +183,12 @@ def create_app(config=None, *, library_factory=None, identity=None):
     elif not guest_mode:
         identity = identity or Cognito(region=config['AWS_REGION'], pool_id=config['COGNITO_POOL_ID'],
                                       client_id=config['COGNITO_CLIENT_ID'], domain=config['COGNITO_DOMAIN'], base_url=base_url)
+    if frontend:
+        frontend_identity = frontend_identity or Google(client_id=config.get('GOOGLE_CLIENT_ID', ''),
+            client_secret=config.get('GOOGLE_CLIENT_SECRET', ''), base_url=frontend['FRONTEND_ORIGIN'])
+
+    def identity_for(request):
+        return frontend_identity if request.scope['reader.public_origin'] != base_url else identity
     if library_factory is None:
         for key in ('OPENAI_API_KEY', 'SUPERMEMORY_API_KEY'):
             if not config.get(key):
@@ -185,13 +207,23 @@ def create_app(config=None, *, library_factory=None, identity=None):
         yield
         await asyncio.to_thread(executor.shutdown, wait=True)
 
-    def network_id(request):
+    def client_address(request):
+        if frontend and request.scope['reader.public_origin'] == frontend['FRONTEND_ORIGIN']:
+            # Vercel overwrites x-real-ip; trust it only after verifying its proxy key.
+            address = request.headers.get('x-real-ip', '')
+            try:
+                return str(ipaddress.ip_address(address))
+            except ValueError:
+                pass
         # The VPC origin accepts CloudFront only. It appends the real viewer IP last.
         address = request.headers.get('x-forwarded-for', '').split(',')[-1].strip()
         try:
-            address = str(ipaddress.ip_address(address))
+            return str(ipaddress.ip_address(address))
         except ValueError:
-            address = request.client.host if request.client else 'unknown'
+            return request.client.host if request.client else 'unknown'
+
+    def network_id(request):
+        address = client_address(request)
         return hmac.new(secret.encode(), address.encode(), 'sha256').hexdigest()
 
     def current_session(request):
@@ -222,7 +254,7 @@ def create_app(config=None, *, library_factory=None, identity=None):
             raise HTTPException(401, 'Your browser session expired. Reload this page to continue.' if guest_mode else 'Sign in to use your account.')
         if bind_account and request.headers.get('x-account-id') != current['owner_id']:
             raise SessionChanged()
-        if mutation and (request.headers.get('origin') != base_url or
+        if mutation and (request.headers.get('origin') != request.scope['reader.public_origin'] or
                          not hmac.compare_digest(request.headers.get('x-csrf-token', ''), current['csrf'])):
             raise HTTPException(403, 'Your session could not be verified. Reload this page and try again.')
         return current
@@ -271,11 +303,10 @@ def create_app(config=None, *, library_factory=None, identity=None):
     def login(request):
         if guest_mode:
             return RedirectResponse('/', 303)
-        # CloudFront appends the connecting viewer address; ignore untrusted earlier values.
-        address = request.headers.get('x-forwarded-for', request.client.host if request.client else '')
-        login_limiter.check(address.split(',')[-1].strip())
-        state, verifier, nonce = accounts.begin_login(reader_return_path(request.query_params.get('next')))
-        response = RedirectResponse(identity.login_url(state, verifier, nonce), 303)
+        login_limiter.check(client_address(request))
+        state, verifier, nonce = accounts.begin_login(reader_return_path(request.query_params.get('next')),
+                                                      public_origin=request.scope['reader.public_origin'])
+        response = RedirectResponse(identity_for(request).login_url(state, verifier, nonce), 303)
         response.set_cookie(LOGIN_COOKIE, state, max_age=600, secure=True, httponly=True, samesite='lax')
         return response
 
@@ -290,6 +321,8 @@ def create_app(config=None, *, library_factory=None, identity=None):
         code = request.query_params.get('code', '')
         if not attempt:
             raise HTTPException(400, 'Sign-in expired or was cancelled. Start again.')
+        if (attempt.get('public_origin') or base_url) != request.scope['reader.public_origin']:
+            raise HTTPException(400, 'Start sign-in again on this website.')
         def retry(reason):
             response = RedirectResponse('/sign-in?' + urlencode({'error': reason,
                 'next': reader_return_path(attempt.get('return_to'))}), 303)
@@ -300,7 +333,7 @@ def create_app(config=None, *, library_factory=None, identity=None):
         if not code or len(code) > 4096:
             return retry('expired')
         try:
-            claims = identity.exchange(code, attempt['verifier'], attempt['nonce'])
+            claims = identity_for(request).exchange(code, attempt['verifier'], attempt['nonce'])
             token = accounts.create_session(**claims)
         except Exception:
             LOG.warning('Sign-in exchange failed; provider details omitted')
@@ -321,7 +354,7 @@ def create_app(config=None, *, library_factory=None, identity=None):
     def logout(request):
         session(request, mutation=True)
         accounts.logout(request.cookies[cookie_name])
-        response = JSONResponse({'redirect': '/' if guest_mode else identity.logout_url()})
+        response = JSONResponse({'redirect': '/' if guest_mode else identity_for(request).logout_url()})
         response.delete_cookie(cookie_name, secure=True, httponly=True, samesite='lax')
         return response
 
@@ -482,7 +515,8 @@ def create_app(config=None, *, library_factory=None, identity=None):
     routes.extend(Route(path, assets) for path in ASSETS)
     app = Starlette(routes=routes, lifespan=lifespan,
                     exception_handlers={HTTPException: error_response, ValueError: error_response, Exception: error_response})
-    app.add_middleware(PublicBoundary, host=parsed.netloc.lower(), origin_secret=secret)
+    app.add_middleware(PublicBoundary, host=parsed.netloc.lower(), origin_secret=secret,
+                       public_origin=base_url, frontend=frontend)
     app.state.accounts = accounts
     app.state.history = history
     app.state.admission = admission

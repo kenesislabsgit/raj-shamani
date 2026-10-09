@@ -21,6 +21,7 @@ from dotenv import dotenv_values
 
 from knowledge.providers import DEFAULT_OPENAI_MODEL
 from knowledge.google_auth import Google
+from knowledge.frontend_proxy import frontend_configuration
 from .template import template
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,11 +33,11 @@ def provider_configuration(file_values, environ=None):
     keys = ('OPENAI_API_KEY', 'SUPERMEMORY_API_KEY', 'OPENAI_CHAT_MODEL', 'PUBLIC_AUTH_MODE')
     result = {key: value for key in keys if (value := file_values.get(key) or environ.get(key))}
     # A client ID and its secret must come from the same source, just like AWS credentials.
-    google_keys = ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET')
-    for source in (file_values, environ):
-        if any(source.get(key) for key in google_keys):
-            result.update({key: source.get(key, '') for key in google_keys})
-            break
+    for paired_keys in (('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'), ('FRONTEND_ORIGIN', 'FRONTEND_PROXY_SECRET')):
+        for source in (file_values, environ):
+            if any(source.get(key) for key in paired_keys):
+                result.update({key: source.get(key, '') for key in paired_keys})
+                break
     return result
 
 
@@ -50,6 +51,7 @@ def auth_configuration(values):
         # Fail before modifying AWS settings when either credential is absent or malformed.
         Google(client_id=result['GOOGLE_CLIENT_ID'], client_secret=result['GOOGLE_CLIENT_SECRET'],
                base_url='https://reader.example.test')
+    result.update(frontend_configuration(values))
     return result
 
 
@@ -311,7 +313,7 @@ def main():
         'PUBLIC_BASE_URL': outputs['URL'], 'COGNITO_POOL_ID': outputs['UserPoolId'],
         'COGNITO_CLIENT_ID': outputs['UserClientId'], 'COGNITO_DOMAIN': outputs['CognitoDomain'],
         'MAX_CONCURRENT_ANSWERS': '2', 'QUESTIONS_PER_USER_DAY': '20', 'QUESTIONS_PER_DAY': '200'})
-    for key in ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'):
+    for key in ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'FRONTEND_ORIGIN', 'FRONTEND_PROXY_SECRET'):
         settings.pop(key, None)
     settings.update(auth_settings)
     secrets.put_secret_value(SecretId=outputs['SettingsSecretArn'], SecretString=json.dumps(settings))

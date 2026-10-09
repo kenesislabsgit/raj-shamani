@@ -41,7 +41,7 @@ class ResponseHistory:
     def save(self, record):
         # Defense in depth if a credential is pasted into a question or echoed by a model.
         encoded = json.dumps(record, ensure_ascii=False)
-        for name in ("OPENAI_API_KEY", "GROQ_API_KEY", "SUPERMEMORY_API_KEY", "DEEPGRAM_API_KEY", "HF_TOKEN", "GOOGLE_CLIENT_SECRET"):
+        for name in ("OPENAI_API_KEY", "GROQ_API_KEY", "SUPERMEMORY_API_KEY", "DEEPGRAM_API_KEY", "HF_TOKEN", "GOOGLE_CLIENT_SECRET", "FRONTEND_PROXY_SECRET"):
             value = os.getenv(name)
             if value:
                 encoded = encoded.replace(json.dumps(value, ensure_ascii=False)[1:-1], "[redacted]")

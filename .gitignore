@@ -27,4 +27,5 @@ data/supermemory-trial/timed-captions/sleep-search.json
 data/supermemory-trial/timed-captions/status.json
 *.DS_Store
 node_modules/
+dist/
 .vercel/

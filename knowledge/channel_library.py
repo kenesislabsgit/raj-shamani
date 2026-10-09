@@ -234,7 +234,7 @@ class ChannelLibrary:
                 client.session.close()
         return True
 
-    def search(self, question, source_id=None):
+    def search(self, question, source_id=None, progress=None):
         from .answers import nonempty_text
         question = nonempty_text(question, "question", 6000)
         if source_id is not None and not isinstance(source_id, str):
@@ -277,7 +277,7 @@ class ChannelLibrary:
         try:
             if progress:
                 progress({"type": "stage", "phase": "search", "message": "Searching the original conversations…"})
-            retrieved = self.search(question, source_id)
+            retrieved = self.search(question, source_id, progress=progress)
             citations = retrieved["excerpts"]
             if progress and citations:
                 progress({"type": "stage", "phase": "review", "message": "Checking source clips against the original transcripts…"})

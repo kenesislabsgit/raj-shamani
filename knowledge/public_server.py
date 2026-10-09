@@ -31,7 +31,7 @@ from .cognito_auth import Cognito
 from .google_auth import Google
 from .raj_library import RajShamaniLibrary
 from .response_history import ResponseHistory
-from .server import STATIC, recorded_answer
+from .server import STATIC, public_progress, recorded_answer
 
 SESSION_COOKIE = '__Host-reader-session'
 GUEST_COOKIE = '__Host-reader-guest'
@@ -39,6 +39,7 @@ LOGIN_COOKIE = '__Host-reader-login'
 LOG = logging.getLogger('knowledge.public')
 ASSETS = {
     '/reader.js': 'reader.js', '/reader.css': 'reader.css', '/theme.js': 'theme.js', '/sign-in.js': 'sign-in.js',
+    '/orb.js': 'orb.js', '/thinking-orbs.js': 'thinking-orbs.js',
     '/catalog.json': 'catalog.json', '/favicon.svg': 'favicon.svg',
     '/geist-latin.woff2': 'geist-latin.woff2', '/media/huberman.png': 'media/huberman.png',
     '/media/raj-shamani.jpg': 'media/raj-shamani.jpg',
@@ -415,11 +416,9 @@ def create_app(config=None, *, library_factory=None, identity=None):
             try:
                 library = library_factory()
                 def progress(event):
-                    if event.get('type') == 'stage' and isinstance(event.get('message'), str):
-                        stage = {'type': 'stage', 'message': event['message']}
-                        if event.get('phase') in ('search', 'review', 'compose'):
-                            stage['phase'] = event['phase']
-                        events.put(stage)
+                    public = public_progress(event)
+                    if public:
+                        events.put(public)
                 result, code = recorded_answer(library, history.for_owner(owner),
                                                {'question': question, 'source_id': source_id}, progress=progress)
                 # Diagnostics remain private on disk and are never downloadable by users.

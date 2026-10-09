@@ -104,6 +104,20 @@ def nonempty_text(value, name: str, maximum: int = 2500) -> str:
     return value.strip()
 
 
+def report_detail(progress, phase: str, message: str) -> None:
+    """Describe a finished step for the live reasoning feed.
+
+    Lines carry counts and outcomes only. Caption text and unchecked summaries stay
+    internal until the final answer, as they do for stage messages.
+    """
+    if progress:
+        progress({"type": "detail", "phase": phase, "message": message})
+
+
+def counted(number: int, noun: str) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"
+
+
 def validate_answer(result: dict, passages: list[dict]) -> dict:
     status = result.get("status")
     if status not in {"answered", "insufficient_evidence"}:

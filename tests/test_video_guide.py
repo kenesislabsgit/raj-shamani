@@ -1,4 +1,5 @@
 import copy
+import json
 import unittest
 from unittest.mock import patch
 
@@ -55,8 +56,27 @@ class VideoGuideTests(unittest.TestCase):
             self.reply.assert_not_called()
             events.append(event)
         self.run_guide(progress=progress)
-        self.assertEqual([event['phase'] for event in events], ['compose'])
+        self.assertEqual([event['phase'] for event in events if event['type'] == 'stage'], ['compose'])
         self.reply.assert_called_once()
+
+    def test_reasoning_details_report_outcomes_without_source_text(self):
+        events = []
+        self.run_guide(progress=events.append)
+        details = [(event['phase'], event['message']) for event in events if event['type'] == 'detail']
+        self.assertEqual(details, [('review', 'Read passage 1 of 1'), ('review', 'Matched 1 passage to your question'),
+                                   ('review', 'Verified clip 1 against its transcript'),
+                                   ('compose', 'Writing an answer from 1 verified clip')])
+        text = json.dumps(events)
+        for private in (self.citations[0]['quote'], self.llm.card['summary'], self.llm.card['why_relevant']):
+            self.assertNotIn(private, text)
+
+    def test_reasoning_details_report_clips_set_aside(self):
+        self.llm.review['summary_supported'] = False
+        events = []
+        recommend_moments('Will my business succeed?', self.citations, self.sources, self.llm,
+                          allow_closest=False, progress=events.append)
+        self.assertIn('Set aside a clip its transcript does not support',
+                      [event['message'] for event in events if event['type'] == 'detail'])
 
     def test_no_sources_does_not_report_answer_preparation(self):
         events = []

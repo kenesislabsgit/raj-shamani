@@ -12,9 +12,9 @@ class RajShamaniLibrary(ChannelLibrary):
     answer_strategy = 'video_guide'
     allow_closest = False
 
-    def search(self, question, source_id=None):
+    def search(self, question, source_id=None, progress=None):
         from .caption_retrieval import retrieve
-        return retrieve(self, question, source_id)
+        return retrieve(self, question, source_id, progress)
 
     def _adopt_trial(self):
         # Browsing an existing collection must not adopt or queue new documents.

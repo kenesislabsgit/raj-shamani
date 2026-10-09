@@ -44,8 +44,16 @@ module.exports = async function checkReaderStream(page, citation, answer) {
   await page.clock.install();
   await start('How can I focus better?');
   await send(candidates);
+  await send({type: 'detail', phase: 'search', message: 'Found 4 candidate passages in 2 conversations'});
+  await page.waitForFunction(() => document.querySelector('[data-phase=search] .reasoning-feed').textContent.includes('Found 4 candidate passages'));
+  assert.equal(await page.locator('[data-phase=search] thinking-orb').count(), 1, 'The running step carries a thinking orb');
+  assert.equal(await page.locator('#assistant-orb').getAttribute('paused'), null, 'The assistant orb animates while busy');
   await send({type: 'stage', phase: 'review', message: 'Checking source clips…'});
   assert.equal(await page.locator('[data-phase=review]').getAttribute('aria-current'), 'step');
+  assert.equal(await page.locator('[data-phase=search] .reasoning-feed').textContent(), '', 'Finished steps collapse to a check');
+  assert.equal(await page.locator('[data-phase=search] thinking-orb').count(), 0);
+  await send({type: 'detail', phase: 'review', message: 'Verified clip 1 against its transcript'});
+  await page.waitForFunction(() => document.querySelector('[data-phase=review] .reasoning-feed .latest')?.textContent === 'Verified clip 1 against its transcript');
   assert.equal(await page.locator('[data-phase=compose] .phase-state').textContent(), 'Waiting');
   assert.equal(await page.locator('#answer-step').textContent(), 'Step 2 of 3');
   await page.clock.fastForward(5000);
@@ -79,6 +87,11 @@ module.exports = async function checkReaderStream(page, citation, answer) {
   assert.equal(await page.locator('#answer').getAttribute('aria-busy'), 'false');
   assert.equal(await page.locator('#answer-progress').isVisible(), false);
   assert.equal(await page.locator('#answer-composer').isVisible(), true);
+  assert.equal(await page.locator('#assistant-orb').getAttribute('paused'), '', 'The assistant orb rests after the answer');
+  assert.match(await page.locator('#reasoning-summary-label').textContent(), /^How this answer was checked · 0:\d\d$/);
+  await page.locator('#reasoning-summary > summary').click();
+  assert.deepEqual(await page.locator('#reasoning-log > li > strong').allTextContents(), ['Search conversations', 'Check source clips']);
+  assert.match(await page.locator('#reasoning-log').textContent(), /Verified clip 1 against its transcript/);
   const finishedElapsed = await page.locator('#answer-elapsed').textContent();
   await page.clock.fastForward(2000);
   assert.equal(await page.locator('#answer-elapsed').textContent(), finishedElapsed, 'Stop the timer when the answer completes');

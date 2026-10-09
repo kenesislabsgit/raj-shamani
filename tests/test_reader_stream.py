@@ -70,6 +70,21 @@ class ReaderStreamTests(unittest.TestCase):
         history = ResponseHistory(Path(self.temp.name) / "responses.sqlite3")
         self.assertEqual(history.get(final["response"]["record_id"])["response"], final["response"])
 
+    def test_reasoning_details_stream_with_phase_and_without_extra_fields(self):
+        def answer(question, source_id=None, *, progress=None):
+            progress({"type": "detail", "phase": "search", "message": "Found 4 candidate passages in 2 conversations",
+                      "excerpts": [self.citation]})
+            progress({"type": "detail", "message": "A detail without a known step is not published"})
+            progress({"type": "detail", "phase": "review", "message": "x" * 500})
+            return self.final
+        self.demo.answer = answer
+        with urlopen(self.request(), timeout=5) as response:
+            events = [json.loads(line) for line in response.read().decode().splitlines() if line.strip()]
+        self.assertEqual(events[0], {"type": "detail", "phase": "search", "message": "Found 4 candidate passages in 2 conversations"})
+        self.assertEqual(events[1], {"type": "detail", "phase": "review", "message": "x" * 240})
+        self.assertEqual(events[2]["type"], "answer")
+        self.assertEqual(len(events), 3)
+
     def test_provider_failure_finishes_stream_with_safe_recorded_error(self):
         def fail(*args, **kwargs):
             kwargs["progress"]({"type": "excerpts", "excerpts": [self.citation]})

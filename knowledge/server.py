@@ -178,6 +178,8 @@ def handler_for(demo: Demo):
                       "/reader.css": ("reader.css", "text/css"),
                       "/reader.js": ("reader.js", "text/javascript"),
                       "/theme.js": ("theme.js", "text/javascript"),
+                      "/orb.js": ("orb.js", "text/javascript"),
+                      "/thinking-orbs.js": ("thinking-orbs.js", "text/javascript"),
                       "/catalog.json": ("catalog.json", "application/json"),
                       "/media/huberman.png": ("media/huberman.png", "image/png"),
                       "/media/raj-shamani.jpg": ("media/raj-shamani.jpg", "image/jpeg"),
@@ -276,17 +278,30 @@ def handler_for(demo: Demo):
                     connected = False
 
             def progress(event):
-                # Retrieval candidates are internal until the answer is checked.
-                if event.get("type") == "stage" and isinstance(event.get("message"), str):
-                    stage = {"type": "stage", "message": event["message"]}
-                    if event.get("phase") in ("search", "review", "compose"):
-                        stage["phase"] = event["phase"]
-                    emit(stage)
+                public = public_progress(event)
+                if public:
+                    emit(public)
 
             body, status = recorded_answer(demo, history, payload, progress=progress)
             emit({"type": "answer", "response": body, "http_status": status})
 
     return Handler
+
+
+def public_progress(event):
+    """Return the part of a progress event the browser may see, or None.
+
+    Retrieval candidates are internal until the answer is checked. Only stage
+    messages and short detail lines for the live reasoning feed are published.
+    """
+    if event.get("type") not in ("stage", "detail") or not isinstance(event.get("message"), str):
+        return None
+    public = {"type": event["type"], "message": event["message"][:240]}
+    if event.get("phase") in ("search", "review", "compose"):
+        public["phase"] = event["phase"]
+    elif event["type"] == "detail":
+        return None
+    return public
 
 
 def recorded_answer(demo, history, payload, *, progress=None):

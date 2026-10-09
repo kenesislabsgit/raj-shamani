@@ -2,7 +2,7 @@
 import re
 
 from .answer_language import question_language, language_matches
-from .answers import nonempty_text
+from .answers import counted, nonempty_text, report_detail
 from .caption_answers import build_passages
 from .supermemory_captions import resolve_hit
 from .guide_reply import compose_reply
@@ -208,6 +208,7 @@ def recommend_moments(question, citations, sources, llm, audit=None, *, allow_cl
         if items and progress:
             progress({'type': 'stage', 'phase': 'compose', 'message': 'Preparing and checking your answer…'})
         if items and coverage != 'closest':
+            report_detail(progress, 'compose', f"Writing an answer from {counted(len(items), 'verified clip')}")
             response.update(compose_reply(question, items, llm, audit.setdefault('consolidated_reply', {})))
             if not allow_closest and not response['points'] and response.get('reply_status') == 'insufficient_evidence':
                 # A topic connection alone does not support an answer to this request.
@@ -247,7 +248,8 @@ def recommend_moments(question, citations, sources, llm, audit=None, *, allow_cl
         return result([], invalid=True)
     readings = {}
     malformed = False
-    for index, passage in enumerate(passages[:6]):
+    reading = passages[:6]
+    for index, passage in enumerate(reading):
         units = [{'id': f'U{i // 4}', 'text': ' '.join(s['text'] for s in passage['segments'][i:i + 4])}
                  for i in range(0, len(passage['segments']), 4)]
         ids = [u['id'] for u in units]
@@ -293,6 +295,8 @@ def recommend_moments(question, citations, sources, llm, audit=None, *, allow_cl
                         'repair': 'Rewrite as one complete sentence under 300 characters, using only the original excerpt. '
                                   'Do not trim or add punctuation to an unfinished sentence. Previous draft is not evidence.',
                         'validation_error': str(exc)}
+        report_detail(progress, 'review', f'Read passage {index + 1} of {len(reading)}' if passage['id'] in readings else
+                      f'Set aside passage {index + 1} of {len(reading)}: it could not be summarized faithfully')
     if not readings:
         return result([], invalid=malformed)
     schema = {'type': 'object', 'properties': {'selected': {'type': 'array', 'maxItems': 6,
@@ -333,6 +337,8 @@ def recommend_moments(question, citations, sources, llm, audit=None, *, allow_cl
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         audit.update(failure_stage='selection', validation_error=str(exc))
         return result([], invalid=True)
+    report_detail(progress, 'review', f"Matched {counted(len(candidates), 'passage')} to your question" if candidates else
+                  'None of the passages fits your question')
     # Keep retrieval order within each class. Only reviewed cards can be displayed.
     candidates.sort(key=lambda row: row[1]['match'] != 'direct')
     selected = []
@@ -357,6 +363,7 @@ def recommend_moments(question, citations, sources, llm, audit=None, *, allow_cl
             check['raw'] = review
             if any(review.get(key) is not True for key in ('summary_supported', 'relevance_supported', 'limitation_supported')):
                 failed_support = True
+                report_detail(progress, 'review', 'Set aside a clip its transcript does not support')
                 continue
             if review.get('title_supported') is not True:
                 card.pop('clip_title', None)
@@ -366,18 +373,22 @@ def recommend_moments(question, citations, sources, llm, audit=None, *, allow_cl
             if review['match'] not in {'direct', 'related', 'none'}:
                 raise ValueError('Invalid reviewed match type.')
             if review['match'] == 'none':
+                report_detail(progress, 'review', 'Set aside a clip that does not fit the question')
                 continue
             if review['match'] == 'related':
                 card['match'] = 'related'
                 if not card['limitation']:
                     card['limitation'] = related_limit(language)
             selected.append({**card, 'citation': {k: v for k, v in cite.items() if k != 'summary'}})
+            report_detail(progress, 'review', f'Verified clip {len(selected)} against its transcript')
             if len(selected) == 3:
                 break
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             failed_support = True
             check['validation_error'] = str(exc)
+            report_detail(progress, 'review', 'Set aside a clip that could not be checked')
     if not selected and allow_closest:
+        report_detail(progress, 'review', 'Looking for the closest related moment instead')
         selected = closest_moment(question, readings, citations, llm, language,
                                   audit.setdefault('closest_fallback', {}))
         failed_support = failed_support or not selected

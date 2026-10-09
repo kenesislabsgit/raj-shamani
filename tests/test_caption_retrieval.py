@@ -34,6 +34,23 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual((cite['start'], cite['end']), (0, 6))
         self.assertTrue(cite['url'].endswith('&t=0s'))
 
+    def test_search_progress_reports_queries_and_counts_without_captions(self):
+        events = []
+        retrieve(self.library, 'Why do I forget what I learn?', progress=events.append)
+        self.assertEqual(events, [
+            {'type': 'detail', 'phase': 'search', 'message': 'Searching for “memory recall practice”'},
+            {'type': 'detail', 'phase': 'search', 'message': 'Found 1 candidate passage in 1 conversation'},
+            {'type': 'detail', 'phase': 'search', 'message': 'Picked 1 passage to read closely'}])
+        self.assertNotIn('recall practice.', json.dumps(events))
+
+    def test_search_progress_reports_keyword_fallback(self):
+        self.client.search.side_effect = RuntimeError('provider secret must not be logged')
+        events = []
+        retrieve(self.library, 'Explain memory', progress=events.append)
+        messages = [event['message'] for event in events]
+        self.assertIn('Semantic search was unavailable, so matched words in the captions instead', messages)
+        self.assertNotIn('provider secret', json.dumps(events))
+
     def test_remote_outage_preserves_local_caption_retrieval(self):
         self.client.search.side_effect = RuntimeError('provider secret must not be logged')
         result = retrieve(self.library, 'Explain memory')

@@ -4,7 +4,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from .answers import nonempty_text
+from .answers import counted, nonempty_text, report_detail
 from .answer_language import OUTPUT_LANGUAGE, english_clarification
 from .supermemory_captions import resolve_hit
 
@@ -127,7 +127,7 @@ def lexical_candidates(sources, queries):
         db.close()
 
 
-def retrieve(library, question, source_id=None):
+def retrieve(library, question, source_id=None, progress=None):
     question = nonempty_text(question, "question", 6000)
     guide = getattr(library, 'answer_strategy', '') == 'video_guide'
     allow_closest = guide and getattr(library, 'allow_closest', True)
@@ -172,6 +172,11 @@ def retrieve(library, question, source_id=None):
                 audit["queries"].append(query.strip())
     except (ValueError, TypeError, AttributeError):
         audit["query_plan_error"] = "Invalid query plan; retained the original question."
+    # Search phrasing is derived from the user's own question, never from captions.
+    for query in audit["queries"][1:]:
+        report_detail(progress, "search", f"Searching for “{query}”")
+    if len(audit["queries"]) == 1:
+        report_detail(progress, "search", "Searching with your question as written")
     sources = {}
     for video_id, record in available.items():
         if not record.get("revision"):
@@ -210,6 +215,8 @@ def retrieve(library, question, source_id=None):
     finally:
         if client is not None:
             client.session.close()
+    if "remote_error" in audit:
+        report_detail(progress, "search", "Semantic search was unavailable, so matched words in the captions instead")
     lists.extend(lexical_candidates(sources, audit["queries"]))
     # Reciprocal-rank fusion uses rank, not incomparable remote similarity/BM25 scores.
     scores, candidates = {}, {}
@@ -239,6 +246,9 @@ def retrieve(library, question, source_id=None):
         if len(pool) < 24:
             pool.append(cite)
     audit["candidate_count"] = len(pool)
+    report_detail(progress, "search", f"Found {counted(len(pool), 'candidate passage')} in "
+                  f"{counted(len({c['source_id'] for c in pool}), 'conversation')}" if pool else
+                  "Found no passages that match this question")
     if not pool:
         return {"excerpts": [], "retrieval": audit}
     selected = pool[:6]
@@ -267,5 +277,7 @@ def retrieve(library, question, source_id=None):
     except (ValueError, TypeError, AttributeError):
         audit["selection_error"] = "Malformed ranking; used validated candidates in fused order."
     audit["selected_count"] = len(selected)
+    report_detail(progress, "search", f"Picked {counted(len(selected), 'passage')} to read closely" if selected else
+                  "None of the passages addresses this question closely enough")
     audit["selected_passages"] = [{"source_id": c["source_id"], "start": c["start"], "end": c["end"]} for c in selected]
     return {"excerpts": selected, "retrieval": audit}

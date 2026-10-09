@@ -670,18 +670,76 @@ function updateResume() {
   $('#resume-question').hidden = view === 'answer' || !$('#asked-question').textContent;
   $('#resume-label').textContent = busy ? 'Your question is being checked. Return to the conversation' : 'Return to your last question';
 }
-function setProgress(text, error = false, loading = false) { $('#request-status').textContent = text; $('#request-status').className = 'request-status' + (error ? ' error' : '') + (loading ? ' loading' : ''); }
+function setProgress(text, error = false, loading = false) {
+  $('#request-status').textContent = text; $('#request-status').className = 'request-status' + (error ? ' error' : '') + (loading ? ' loading' : '');
+  // While an answer is prepared, the reasoning panel shows the same stage message.
+  if (loading) $('#reasoning-title .shimmer').textContent = text;
+}
+const phaseLabels = {search: 'Search conversations', review: 'Check source clips', compose: 'Prepare answer'};
+let reasoningLog = [];
+function phaseMarker(state, orb) {
+  if (state === 'active') {
+    const spinner = el('thinking-orb'); spinner.setAttribute('state', orb); spinner.setAttribute('size', '20');
+    spinner.setAttribute('aria-hidden', 'true'); return spinner;
+  }
+  return state === 'complete' ? icon('check') : el('span', 'marker-ring');
+}
+function assistantOrb(state) {
+  // The orb replaces the brand mark only while this answer is being prepared.
+  const orb = $('#assistant-orb');
+  orb.setAttribute('state', state || 'breathing');
+  orb.toggleAttribute('paused', !state);
+  orb.parentElement.classList.toggle('thinking', Boolean(state));
+}
 function generationPhase(phase) {
   const phases = ['search', 'review', 'compose'], current = phases.indexOf(phase);
   if (current < 0) return;
   $('#answer-step').textContent = `Step ${current + 1} of ${phases.length}`;
   document.querySelectorAll('#answer-progress [data-phase]').forEach((node, index) => {
-    const active = index === current, complete = index < current;
-    node.dataset.state = active ? 'active' : complete ? 'complete' : 'waiting';
-    node.querySelector('.phase-marker').textContent = complete ? '✓' : String(index + 1);
-    if (active) node.setAttribute('aria-current', 'step');
+    const active = index === current, complete = index < current, state = active ? 'active' : complete ? 'complete' : 'waiting';
+    if (node.dataset.state !== state) node.querySelector('.phase-marker').replaceChildren(phaseMarker(state, node.dataset.orb));
+    node.dataset.state = state;
+    if (active) { node.setAttribute('aria-current', 'step'); assistantOrb(node.dataset.orb); }
     else node.removeAttribute('aria-current');
     node.querySelector('.phase-state').textContent = active ? 'In progress' : complete ? 'Done' : 'Waiting';
+  });
+  renderReasoningFeed();
+}
+function reasoningDetail(phase, message) {
+  if (!phaseLabels[phase] || typeof message !== 'string' || !message.trim()) return;
+  if (reasoningLog.at(-1)?.message === message) return;
+  reasoningLog.push({phase, message: message.slice(0, 240)}); renderReasoningFeed();
+}
+function renderReasoningFeed() {
+  // Like the audit timeline it comes from: only the running step shows its recent work.
+  document.querySelectorAll('#answer-progress [data-phase]').forEach(node => {
+    const feed = node.querySelector('.reasoning-feed');
+    if (node.dataset.state !== 'active') { feed.replaceChildren(); return; }
+    const recent = reasoningLog.filter(line => line.phase === node.dataset.phase).slice(-4);
+    feed.replaceChildren(...recent.map((line, index) => el('p', index === recent.length - 1 ? 'latest' : '', line.message)),
+      el('p', 'thinking shimmer', 'Thinking…'));
+  });
+}
+function showReasoningSummary(answered, seconds) {
+  const steps = ['search', 'review', 'compose'].filter(phase => reasoningLog.some(line => line.phase === phase));
+  if (!steps.length) return;
+  $('#reasoning-summary-label').textContent = `${answered ? 'How this answer was checked' : 'How the archive was searched'} · ${timeLabel(seconds)}`;
+  $('#reasoning-log').replaceChildren(...steps.map(phase => {
+    const step = el('li'), lines = el('ul');
+    lines.append(...reasoningLog.filter(line => line.phase === phase).map(line => el('li', '', line.message)));
+    step.append(el('strong', '', phaseLabels[phase]), lines); return step;
+  }));
+  $('#reasoning-summary').open = false; $('#reasoning-summary').hidden = false;
+}
+function resetReasoning() {
+  reasoningLog = []; assistantOrb('');
+  $('#reasoning-summary').hidden = true; $('#reasoning-log').replaceChildren();
+  $('#reasoning-title .shimmer').textContent = 'Thinking…';
+  document.querySelectorAll('#answer-progress [data-phase]').forEach(node => {
+    delete node.dataset.state; node.removeAttribute('aria-current');
+    node.querySelector('.phase-marker').replaceChildren(phaseMarker('waiting'));
+    node.querySelector('.phase-state').textContent = 'Waiting';
+    node.querySelector('.reasoning-feed').replaceChildren();
   });
 }
 function beginAnswer(question, options = {}) {
@@ -689,24 +747,36 @@ function beginAnswer(question, options = {}) {
   $('#answer-label').hidden = true;
   $('#retry-question').hidden = true;
   $('#answer-scope').textContent = lastQuestion?.sourceID ? 'Conversation: ' + (findVideo(lastQuestion.sourceID)?.title || 'Selected conversation') : 'All conversations';
-  $('#watch-panel').hidden = true; $('#watch-container').replaceChildren(); setProgress('');
+  $('#watch-panel').hidden = true; $('#watch-container').replaceChildren(); setProgress(''); resetReasoning();
 }
+const matchLabels = {direct: 'Direct match', related: 'Related context', closest: 'Closest match'};
 function momentCard(citation, index, guide) {
   const node = el('article', 'moment'); node.id = `moment-${index + 1}`; node.tabIndex = -1;
   node.dataset.clipKey = clipKey(citation); node.dataset.clipNumber = String(index + 1);
-  const top = el('div', 'moment-topline'), copy = el('div');
   const title = guide?.clip_title || citation.clip_title || `Clip ${index + 1}: ${findVideo(videoID(citation))?.guest || 'Figuring Out'}`;
   const item = {...citation, kind: 'moment', clip_title: guide?.clip_title || citation.clip_title || '', summary: guide?.summary || citation.summary || ''};
-  copy.append(el('h3', '', title), el('p', 'clip-source', citation.title || findVideo(videoID(citation))?.title),
-    el('p', 'clip-time', `Clip ${index + 1} · ${clipRange(citation)} · ${timeLabel(Math.ceil(citation.end) - Math.floor(citation.start))}`));
-  top.append(copy, saveButton(item, 'Save this clip')); node.append(top);
+  // The thumbnail repeats the labelled Play clip button for pointer users only.
+  const thumb = el('div', 'moment-thumb'); thumb.setAttribute('aria-hidden', 'true');
+  const glyph = el('span', 'play-circle'); glyph.append(icon('play'));
+  thumb.append(imageFor(citation), glyph, el('span', 'moment-duration', timeLabel(Math.ceil(citation.end) - Math.floor(citation.start))));
+  thumb.addEventListener('click', () => play(item, true));
+  const body = el('div', 'moment-body'), top = el('div', 'moment-topline'), copy = el('div');
+  // The number matches the answer's citation chips.
+  const heading = el('div', 'clip-heading'), number = el('span', 'clip-number', String(index + 1));
+  number.setAttribute('aria-hidden', 'true'); heading.append(number, el('h3', '', title));
+  const meta = el('p', 'clip-time', [findVideo(videoID(citation))?.guest, clipRange(citation)].filter(Boolean).join(' · '));
+  if (matchLabels[guide?.match]) meta.append(el('span', `moment-match ${guide.match}`, matchLabels[guide.match]));
+  const source = el('p', 'clip-source', citation.title || findVideo(videoID(citation))?.title); source.title = source.textContent;
+  copy.append(heading, meta, source);
+  top.append(copy, saveButton(item, 'Save this clip')); body.append(top);
   const description = guide?.summary || guide?.why_relevant;
-  if (description) node.append(el('p', 'moment-copy', description));
-  if (guide?.limitation) node.append(el('p', 'moment-limit', guide.limitation));
+  if (description) body.append(el('p', 'moment-copy', description));
+  if (guide?.limitation) body.append(el('p', 'moment-limit', guide.limitation));
   const actions = el('div', 'moment-actions');
   const playButton = button('Play clip', 'clip-play solid-button', () => play(item, true), 'play');
   playButton.setAttribute('aria-label', `Play clip ${index + 1}: ${clipRange(citation)}`);
-  actions.append(playButton, external('Full video', fullVideoURL(citation))); node.append(actions); return node;
+  actions.append(playButton, external('Full video', fullVideoURL(citation))); body.append(actions);
+  node.append(thumb, body); return node;
 }
 function renderMoments(items) {
   stopVideo(); $('#moments-section').hidden = !items.length;
@@ -780,6 +850,7 @@ async function ask(question, selectedTopic = '', options = {}) {
   beginAnswer(question); setProgress('Searching the original conversations…', false, true);
   updateConnection(); $('#asked-question').focus({preventScroll: true});
   generationPhase('search'); $('#answer-progress').hidden = false;
+  let answered = false;
   const startedAt = Date.now();
   const elapsed = () => { $('#answer-elapsed').textContent = `Elapsed ${timeLabel((Date.now() - startedAt) / 1000)}`; };
   elapsed(); const elapsedTimer = setInterval(elapsed, 1000);
@@ -802,8 +873,9 @@ async function ask(question, selectedTopic = '', options = {}) {
       if (event.type === 'stage' && typeof event.message === 'string') {
         setProgress(event.message, false, true); generationPhase(event.phase);
       }
+      if (event.type === 'detail') reasoningDetail(event.phase, event.message);
       // Older servers may send raw excerpts. Only the final response can show clips.
-      if (event.type === 'answer') { renderAnswer(event.response); finished = true; }
+      if (event.type === 'answer') { renderAnswer(event.response); finished = true; answered = !event.response.error; }
     };
     while (!finished) {
       const part = await reader.read(); buffer += decoder.decode(part.value || new Uint8Array(), {stream: !part.done});
@@ -821,9 +893,14 @@ async function ask(question, selectedTopic = '', options = {}) {
       : error instanceof TypeError ? 'The connection was interrupted. Please retry your question.'
       : error.message || 'This request could not finish. Please try again.';
     setProgress(message, !request.cancelled);
+    // The reply shows the outcome; the status line keeps announcing it once.
+    const reply = el('p', 'answer-message' + (request.cancelled ? '' : ' error'), message);
+    reply.setAttribute('aria-hidden', 'true'); $('#answer').append(reply);
+    $('#request-status').classList.add('mirrored');
   } finally {
     clearTimeout(slowTimer); clearTimeout(timeout); clearInterval(elapsedTimer);
-    $('#answer-progress').hidden = true;
+    $('#answer-progress').hidden = true; assistantOrb('');
+    if (answered) showReasoningSummary(Boolean($('#answer .answer-prose')), (Date.now() - startedAt) / 1000);
     if (reader) reader.cancel().catch(() => {});
     controller.abort();
     $('#answer').setAttribute('aria-busy', 'false');

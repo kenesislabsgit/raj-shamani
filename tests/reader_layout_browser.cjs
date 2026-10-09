@@ -58,13 +58,12 @@ module.exports = async (page, output, citation) => {
         });
         assert.deepEqual(issues, [], `${theme} ${width}px ${view}`);
         if (view === 'answer') {
-          const [summary, clips, composer] = await Promise.all(['#answer-summary', '#moments-section', '#answer-composer'].map(selector => page.locator(selector).boundingBox()));
-          if (width > 1000) {
-            assert.ok(summary.x + summary.width < clips.x, 'Desktop answer and sources use separate columns');
-            assert.equal(Math.round(summary.y), Math.round(clips.y), 'Columns align at the top');
-          } else {
-            assert.ok(summary.y + summary.height <= clips.y && clips.y + clips.height <= composer.y, 'Mobile shows the answer, all sources, then the next question');
-          }
+          // The answer reads as one chat column at every width; the composer stays pinned below it.
+          const [question, summary, clips] = await Promise.all(['#asked-question', '#answer-summary', '#moments-section'].map(selector => page.locator(selector).boundingBox()));
+          assert.ok(question.y + question.height <= summary.y, 'The question precedes the reply');
+          assert.ok(summary.y + summary.height <= clips.y, 'The answer precedes its source clips');
+          assert.ok(Math.abs(summary.x - clips.x) < 1 && summary.width === clips.width, 'Answer and sources share one column');
+          assert.equal(await page.locator('#answer-composer').evaluate(node => getComputedStyle(node).position), 'sticky');
         }
         if ([1440, 390].includes(width)) {
           await page.evaluate(async () => {

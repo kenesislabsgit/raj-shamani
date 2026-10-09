@@ -32,14 +32,16 @@ const {execFileSync} = require('node:child_process');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
-  const browser = await chromium.launch({headless: true, channel: 'chrome'});
+  const browser = await chromium.launch(process.env.CHROME_PATH
+    ? {headless: true, executablePath: process.env.CHROME_PATH}
+    : {headless: true, channel: 'chrome'});
   try {
     const context = await browser.newContext({viewport: {width: 1440, height: 900}, reducedMotion: 'reduce'});
     context.setDefaultTimeout(10000);
     const errors = [], logoutOwners = [];
     context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
     const types = {'.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.png': 'image/png'};
-    const allowed = new Set(['reader.js', 'reader.css', 'theme.js', 'sign-in.js', 'catalog.json', 'geist-latin.woff2', 'google-sans.ttf', 'media/raj-shamani.jpg', 'media/google-g.png', 'favicon.svg']);
+    const allowed = new Set(['reader.js', 'reader.css', 'theme.js', 'orb.js', 'thinking-orbs.js', 'sign-in.js', 'catalog.json', 'geist-latin.woff2', 'google-sans.ttf', 'media/raj-shamani.jpg', 'media/google-g.png', 'favicon.svg']);
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.origin !== origin) return route.abort();

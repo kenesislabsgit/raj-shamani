@@ -217,13 +217,25 @@ The snapshot is a browsing catalog; it does not mark any video as searchable.
 Original captions and provider configuration are still required for checked answers.
 
 When connected, questions use `POST /api/ask/stream`. The server sends progress text
-with allowlisted search/review/compose phases,
-then one final checked response, using newline-delimited JSON. Retrieved candidates
-stay internal. On desktop, the answer and source clips sit side by side. On smaller
-screens, the answer, source clips, and next-question composer follow in reading order.
-While generating, the next-question form and "Ask another" action are hidden. A connected
-three-step timeline follows real search, clip review, and answer preparation events;
-elapsed time never advances the steps or implies an estimated completion time.
+with allowlisted search/review/compose phases, short `detail` lines for each finished
+step, then one final checked response, using newline-delimited JSON. Retrieved candidates
+stay internal: detail lines carry the search phrasing derived from the question, counts,
+and whether each clip was verified or set aside, never caption text or unchecked
+summaries. Both servers publish only a detail line's phase and message, capped at 240
+characters.
+
+The answer view reads as a chat: the question appears as a message, and the reply,
+its source clips, and a composer pinned to the bottom of the window follow in one
+column at every width. While generating, the composer is hidden. A vertical reasoning
+timeline follows real search, clip review, and answer preparation events. The running
+step shows a thinking orb and its latest detail lines; finished steps collapse to a
+check. Elapsed time never advances the steps or implies an estimated completion time.
+After an answer, "How this answer was checked" reopens the full log. Saved answers
+reopened from Past questions have no log. The orbs are the MIT-licensed
+[thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) 0.3.1 engine, vendored
+unchanged as `knowledge/web/thinking-orbs.js` and drawn by the framework-free
+`<thinking-orb>` element in `knowledge/web/orb.js`. They follow the page theme, pause
+offscreen and in hidden tabs, and show a still frame when reduced motion is requested.
 The form returns on success, failure, or cancellation. Cancel stops waiting and restores
 the question for editing; it does not guarantee that a running provider call stops or
 avoids its charge. A completed answer can still appear in Past questions. The homepage

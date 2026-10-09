@@ -7,14 +7,16 @@ const path = require('node:path');
 (async () => {
   const origin = 'https://reader.example.test';
   const assets = path.join(__dirname, '../knowledge/web');
-  const browser = await chromium.launch({headless: true, channel: 'chrome'});
+  const browser = await chromium.launch(process.env.CHROME_PATH
+    ? {headless: true, executablePath: process.env.CHROME_PATH}
+    : {headless: true, channel: 'chrome'});
   try {
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     const types = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
       '.json': 'application/json', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.png': 'image/png', '.woff2': 'font/woff2'};
-    const allowed = new Set(['index.html', 'reader.js', 'theme.js', 'reader.css',
+    const allowed = new Set(['index.html', 'reader.js', 'theme.js', 'reader.css', 'orb.js', 'thinking-orbs.js',
       'catalog.json', 'favicon.svg', 'geist-latin.woff2', 'media/huberman.png', 'media/raj-shamani.jpg']);
     await page.context().route('**/*', async route => {
       const url = new URL(route.request().url());
